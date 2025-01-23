@@ -10,7 +10,8 @@
 #include <openssl/core_names.h>
 #include <openssl/rand.h>
 
-#define DEVICE_NAME "/home/kpetrucena/Programming/rqrng-dbus-openssl-provider/README.md"
+// #define DEVICE_NAME "/home/kpetrucena/Programming/krisjanisp-github/rqrng-dbus-openssl-provider/README.md"
+#define DEVICE_NAME "/dev/random"
 #define QRNG_MAX_READ_SIZE 65536 // Define a suitable maximum read size
 
 extern int errno;

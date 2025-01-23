@@ -9,7 +9,7 @@ extern const OSSL_DISPATCH qrng_rand_functions[];
 
 // Define the RNG algorithm
 static const OSSL_ALGORITHM qrng_rands[] = {
-    { "CTR-DRBG", "provider=RQRNG", qrng_rand_functions, "Remote Quantum Random Number Generation" },
+    { "CTR-DRBG", NULL, qrng_rand_functions, "Remote Quantum Random Number Generation" },
     { NULL, NULL, NULL }
 };
 
@@ -21,6 +21,7 @@ static const OSSL_ALGORITHM *qrng_query_operation(void *provctx, int operation_i
     case OSSL_OP_RAND:
         return qrng_rands;
     default:
+        fprintf(stderr, "QRNG provider> returning nothing, no algo matches op id %d\n", operation_id);
         return NULL;
     }
 }
