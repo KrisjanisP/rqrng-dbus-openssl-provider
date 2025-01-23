@@ -2,6 +2,7 @@
 #ifndef QRNG_PROVIDER_H
 #define QRNG_PROVIDER_H
 
+#include <systemd/sd-bus.h>
 #include <openssl/provider.h>
 #include <openssl/core_dispatch.h>
 #include <openssl/core_names.h>
@@ -18,7 +19,7 @@ typedef struct qrng_rand_ctx_st QRNG_RAND_CTX;
 struct qrng_rand_ctx_st {
     CRYPTO_RWLOCK *lock;
     int state;
-    // Add any additional fields as necessary
+    sd_bus *bus;  // Add D-Bus connection=
 };
 
 // Forward declaration of QRNG_PROVIDER_CTX

@@ -9,12 +9,66 @@
 #include <openssl/core.h>
 #include <openssl/core_names.h>
 #include <openssl/rand.h>
+#include <systemd/sd-bus.h>
+#include <openssl/crypto.h>
 
 // #define DEVICE_NAME "/home/kpetrucena/Programming/krisjanisp-github/rqrng-dbus-openssl-provider/README.md"
 #define DEVICE_NAME "/dev/random"
 #define QRNG_MAX_READ_SIZE 65536 // Define a suitable maximum read size
 
 extern int errno;
+
+// Function to get random bytes via D-Bus
+static int dbus_get_random_bytes(sd_bus *bus, unsigned char *out, size_t outlen) {
+    sd_bus_error error = SD_BUS_ERROR_NULL;
+    sd_bus_message *reply = NULL;
+    int ret;
+
+    // Make the D-Bus method call
+    ret = sd_bus_call_method(
+        bus,
+        "lv.lumii.qrng",                             // Service
+        "/lv/lumii/qrng/RemoteQrngXorLinuxRng",      // Object path
+        "lv.lumii.qrng.Rng",                         // Interface
+        "GenerateOctets",                            // Method
+        &error,
+        &reply,
+        "t",                                         // Input signature
+        (uint32_t)outlen                             // Number of bytes requested
+    );
+
+    if (ret < 0) {
+        fprintf(stderr, "Failed to call D-Bus method: %s\n", error.message);
+        sd_bus_error_free(&error);
+        return 0;
+    }
+
+    // Parse the reply
+    uint32_t status;
+    ret = sd_bus_message_read(reply, "u", &status);
+    if (ret < 0 || status != 0) {
+        sd_bus_error_free(&error);
+        sd_bus_message_unref(reply);
+        return 0;
+    }
+
+    // Read the array of bytes
+    const void *ptr;
+    size_t received_len;
+    ret = sd_bus_message_read_array(reply, 'y', &ptr, &received_len);
+    if (ret < 0 || received_len != outlen) {
+        sd_bus_error_free(&error);
+        sd_bus_message_unref(reply);
+        return 0;
+    }
+
+    // Copy the received bytes to the output buffer
+    memcpy(out, ptr, outlen);
+
+    sd_bus_error_free(&error);
+    sd_bus_message_unref(reply);
+    return 1;
+}
 
 // Fallback function using getrandom
 static int fallback_rand_bytes(unsigned char *out, size_t count) {
@@ -26,32 +80,26 @@ static int fallback_rand_bytes(unsigned char *out, size_t count) {
     return 1;
 }
 
-// Generate function with error handling
+// Modify the generate function to use D-Bus
 static int
 qrng_rand_generate(void *ctx, unsigned char *out, size_t outlen,
                    unsigned int strength, int prediction_resistance,
                    const unsigned char *adin, size_t adinlen)
 {
-    ssize_t bytes_read = 0;
-    int fd = open(DEVICE_NAME, O_RDONLY);
-
-    if (fd == -1) {
-        perror("Failed to open device, falling back to getrandom");
-        return fallback_rand_bytes(out, outlen);
+    QRNG_RAND_CTX *qrng_ctx = ctx;
+    
+    // Try to get random bytes via D-Bus
+    if (qrng_ctx->bus != NULL) {
+        if (dbus_get_random_bytes(qrng_ctx->bus, out, outlen)) {
+            return 1;
+        }
     }
 
-    bytes_read = read(fd, out, outlen);
-    close(fd);
-
-    if (bytes_read != outlen) {
-        fprintf(stderr, "Failed to read enough bytes: expected %zu, got %zd. Falling back to getrandom.\n", outlen, bytes_read);
-        return fallback_rand_bytes(out, outlen);
-    }
-
-    return 1;
+    // Fall back to getrandom if D-Bus fails
+    return fallback_rand_bytes(out, outlen);
 }
 
-// Context creation
+// Modify the context creation to initialize D-Bus
 static void *
 qrng_rand_newctx(void *provctx, void *parent,
                 const OSSL_DISPATCH *parent_calls)
@@ -66,11 +114,17 @@ qrng_rand_newctx(void *provctx, void *parent,
         return NULL;
     }
 
+    // Initialize D-Bus connection
+    if (sd_bus_open_user(&rand->bus) < 0) {
+        fprintf(stderr, "Failed to connect to D-Bus, will fall back to getrandom\n");
+        rand->bus = NULL;
+    }
+
     rand->state = EVP_RAND_STATE_UNINITIALISED;
     return rand;
 }
 
-// Context freeing
+// Modify context freeing to clean up D-Bus
 static void
 qrng_rand_freectx(void *ctx)
 {
@@ -79,6 +133,9 @@ qrng_rand_freectx(void *ctx)
     if (rand == NULL)
         return;
 
+    if (rand->bus != NULL)
+        sd_bus_unref(rand->bus);
+    
     CRYPTO_THREAD_lock_free(rand->lock);
     OPENSSL_clear_free(rand, sizeof(QRNG_RAND_CTX));
 }
